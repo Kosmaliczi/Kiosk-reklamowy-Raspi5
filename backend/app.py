@@ -1086,5 +1086,60 @@ def api_put_file_content():
         except:
             pass
 
+# Obracanie ekranu kiosku przez SSH za pomocą xrandr
+@app.route('/api/kiosks/<int:kiosk_id>/rotate-display', methods=['POST'])
+@token_required
+def rotate_kiosk_display(kiosk_id):
+    data = request.json or {}
+    orientation = (data.get('orientation') or '').strip().lower()
+    if orientation not in ['right', '0', 'normal']:
+        return jsonify({"error": "Nieprawidłowa orientacja. Użyj 'right' lub '0' (normal)."}), 400
+    if orientation == 'normal':
+        orientation = '0'
+
+    conn = get_db_connection()
+    kiosk = conn.execute('SELECT id, name, ip_address FROM kiosks WHERE id = ?', (kiosk_id,)).fetchone()
+    conn.close()
+    if not kiosk:
+        return jsonify({"error": "Kiosk nie znaleziony"}), 404
+    if not kiosk['ip_address']:
+        return jsonify({"error": "Kiosk nie ma przypisanego adresu IP"}), 400
+
+    # Pobierz ustawienia SSH
+    conn = get_db_connection()
+    settings = conn.execute('SELECT key, value FROM settings WHERE key IN ("defaultSshUsername", "defaultSshPort")').fetchall()
+    conn.close()
+    settings_dict = {s['key']: s['value'] for s in settings}
+    ssh_username = settings_dict.get('defaultSshUsername', 'kiosk')
+    ssh_port = int(settings_dict.get('defaultSshPort', 22))
+
+    ssh_key_path = os.path.join(os.path.dirname(__file__), 'ssh_keys', 'kiosk_id_rsa')
+    if not os.path.exists(ssh_key_path):
+        return jsonify({"error": "Brak klucza SSH backend/ssh_keys/kiosk_id_rsa"}), 500
+
+    try:
+        import paramiko
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        key = paramiko.RSAKey.from_private_key_file(ssh_key_path)
+        ssh.connect(kiosk['ip_address'], port=ssh_port, username=ssh_username, pkey=key, timeout=10)
+
+        # Wykonaj polecenie xrandr na ekranie :0
+        cmd = f"bash -lc 'export DISPLAY=:0; xrandr -o {orientation}'"
+        stdin, stdout, stderr = ssh.exec_command(cmd, timeout=10)
+        out = stdout.read().decode('utf-8', errors='ignore').strip()
+        err = stderr.read().decode('utf-8', errors='ignore').strip()
+        code = stdout.channel.recv_exit_status()
+        ssh.close()
+
+        if code != 0:
+            return jsonify({"error": f"Błąd xrandr: {err or 'nieznany błąd'}", "stdout": out}), 500
+
+        return jsonify({"message": "Ekran obrócony", "stdout": out})
+    except ImportError:
+        return jsonify({"error": "Brak biblioteki paramiko. Zainstaluj: pip install paramiko"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Nieoczekiwany błąd: {str(e)}"}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

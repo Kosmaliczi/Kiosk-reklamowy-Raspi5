@@ -101,6 +101,9 @@ function initUI() {
     // Obsługa Playlist UI
     setupPlaylistUI();
 
+    // Obsługa Edytora Tekstu
+    setupTextEditorUI();
+
     // Aktualizuj datę z dodaną godziną i sekundami
     updateDateTime();
     // Aktualizuj datę co sekundę
@@ -108,6 +111,14 @@ function initUI() {
 
     // Załaduj ustawienia do formularzy
     loadSettingsToForms();
+
+    // Jeśli połączenie FTP już istnieje (np. po odświeżeniu), włącz przyciski edytora
+    const loadTextBtnAtInit = document.getElementById('load-text');
+    const saveTextBtnAtInit = document.getElementById('save-text');
+    if (ftp.connection && loadTextBtnAtInit && saveTextBtnAtInit) {
+        loadTextBtnAtInit.disabled = false;
+        saveTextBtnAtInit.disabled = false;
+    }
 }
 
 /**
@@ -421,6 +432,12 @@ function setupForms() {
             
             // Załaduj pliki
             loadFtpFiles('/');
+
+            // Włącz przyciski edytora tekstu po nawiązaniu połączenia
+            const loadTextBtn = document.getElementById('load-text');
+            const saveTextBtn = document.getElementById('save-text');
+            if (loadTextBtn) loadTextBtn.disabled = false;
+            if (saveTextBtn) saveTextBtn.disabled = false;
 
             // Dodaj informację o aktualnie połączonym kiosku
             const connInfoElement = document.getElementById('ftp-connected-kiosk');
@@ -1674,6 +1691,31 @@ function updateKiosksTableOnly() {
            connectVNC(kiosk);
        });
        actionsCell.appendChild(vncBtn);
+
+    // Przycisk obrotu ekranu (toggle right/0)
+    const rotateBtn = document.createElement('button');
+    rotateBtn.classList.add('btn');
+    // Ikona + tekst, aby przycisk był czytelny
+    rotateBtn.innerHTML = '<i class="fas fa-rotate-right"></i> Obróć';
+    rotateBtn.title = 'Obróć ekran (right/normal)';
+       // Domyślny stan: normal (0)
+       rotateBtn.dataset.orientation = '0';
+       rotateBtn.addEventListener('click', async () => {
+           try {
+               // Przełącz stan
+               const next = rotateBtn.dataset.orientation === '0' ? 'right' : '0';
+               // Wywołaj API
+               const res = await api.rotateKioskDisplay(kiosk.id, next);
+               // Zapisz nowy stan po sukcesie
+               rotateBtn.dataset.orientation = next;
+               // Uaktualnij tytuł
+               rotateBtn.title = next === 'right' ? 'Ustaw normalny (0)' : 'Ustaw obrót right';
+               showToast(`Ekran obrócony: ${next === 'right' ? 'prawo' : 'normalny'}`, 'success');
+           } catch (e) {
+               showToast(`Błąd obrotu ekranu: ${e.message}`, 'error');
+           }
+       });
+       actionsCell.appendChild(rotateBtn);
        
        // Przycisk usuwania
        const deleteBtn = document.createElement('button');
@@ -2048,4 +2090,60 @@ async function restartKioskService(kiosk) {
         showToast(`Błąd podczas restartowania usługi: ${error.message || 'Nieznany błąd'}`, 'error');
     }
     
+}
+
+/**
+ * Konfiguracja edytora pliku tekstowego (.txt)
+ */
+function setupTextEditorUI() {
+    const loadBtn = document.getElementById('load-text');
+    const saveBtn = document.getElementById('save-text');
+    const pathInput = document.getElementById('text-file-path');
+    const editor = document.getElementById('text-editor-area');
+
+    if (!loadBtn || !saveBtn || !pathInput || !editor) return;
+
+    // Wczytaj zawartość pliku
+    loadBtn.addEventListener('click', async () => {
+        if (!ftp.connection) {
+            showToast('Najpierw połącz się z serwerem FTP w sekcji FTP.', 'warning');
+            switchSection('ftp');
+            return;
+        }
+        const path = pathInput.value?.trim();
+        if (!path) {
+            showToast('Podaj poprawną ścieżkę do pliku .txt', 'error');
+            return;
+        }
+        try {
+            const res = await api.getFileContent(ftp.connection, path);
+            // Backend powinien zwracać { content: '...' }
+            editor.value = (res && typeof res.content === 'string') ? res.content : '';
+            showToast('Plik wczytany.', 'success');
+            addActivity(`Wczytano plik: ${path}`);
+        } catch (e) {
+            showToast(`Nie udało się wczytać pliku: ${e.message}`, 'error');
+        }
+    });
+
+    // Zapisz zawartość pliku
+    saveBtn.addEventListener('click', async () => {
+        if (!ftp.connection) {
+            showToast('Najpierw połącz się z serwerem FTP w sekcji FTP.', 'warning');
+            switchSection('ftp');
+            return;
+        }
+        const path = pathInput.value?.trim();
+        if (!path) {
+            showToast('Podaj poprawną ścieżkę do pliku .txt', 'error');
+            return;
+        }
+        try {
+            await api.putFileContent(ftp.connection, path, editor.value ?? '');
+            showToast('Plik zapisany.', 'success');
+            addActivity(`Zapisano plik: ${path}`);
+        } catch (e) {
+            showToast(`Nie udało się zapisać pliku: ${e.message}`, 'error');
+        }
+    });
 }

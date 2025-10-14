@@ -195,6 +195,15 @@ class ApiClient {
     }
 
     /**
+     * Obraca ekran kiosku przez SSH (xrandr)
+     * @param {number} kioskId
+     * @param {'right'|'0'|'normal'} orientation
+     */
+    async rotateKioskDisplay(kioskId, orientation) {
+        return this.fetchApi(`/api/kiosks/${kioskId}/rotate-display`, 'POST', { orientation });
+    }
+
+    /**
      * Pobiera zawartość pliku z serwera FTP
      * @param {object} connectionData - dane połączenia FTP
      * @param {string} filePath - ścieżka do pliku
